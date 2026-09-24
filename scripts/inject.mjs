@@ -13,6 +13,10 @@
  *   - call webContents.executeJavaScript() with renderer.js after load,
  *     bypassing Discord's CSP
  *
+ * IMPORTANT: We do NOT touch contextIsolation. Discord sets it to true and
+ * its auth/session code depends on the isolated-world boundary. Forcing it
+ * to false breaks login persistence (Discord logs you out on every launch).
+ *
  * Uninject reverses steps 1-4.
  */
 
@@ -102,7 +106,7 @@ const fs     = require("fs");
 const Module = require("module");
 const { app } = require("electron");
 
-const SYCORD_DIR = ${sycordDirStr};
+const SYCORD_DIR    = ${sycordDirStr};
 const RENDERER_PATH = path.join(SYCORD_DIR, "renderer.js");
 
 // Intercept require("electron") so we can proxy BrowserWindow
@@ -126,8 +130,9 @@ Module._load = function(request, parent, isMain) {
                 process.env.SYCORD_ORIGINAL_PRELOAD = webPrefs.preload;
             }
 
-            webPrefs.preload          = path.join(SYCORD_DIR, "preload.js");
-            webPrefs.contextIsolation = false;
+            // Swap in our preload. We do NOT touch contextIsolation —
+            // Discord's auth/session handling depends on it being true.
+            webPrefs.preload = path.join(SYCORD_DIR, "preload.js");
 
             args[0] = Object.assign({}, opts, { webPreferences: webPrefs });
 
