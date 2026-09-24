@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "strict": true,
+        "jsx": "react",
+        "jsxFactory": "React.createElement",
+        "jsxFragmentFactory": "React.Fragment",
+        "useDefineForClassFields": true,
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "resolveJsonModule": true,
+        "baseUrl": ".",
+        "paths": {
+            "@webpack": ["src/renderer/webpack/index.ts"],
+            "@webpack/common": ["src/renderer/webpack/common.ts"],
+            "@api/*": ["src/renderer/api/*"],
+            "@utils/*": ["src/utils/*"],
+            "@plugins": ["src/plugins/index.ts"],
+            "@components/*": ["src/renderer/components/*"],
+            "@sycord": ["src/renderer/sycord.ts"]
+        },
+        "skipLibCheck": true
+    },
+    "include": ["src/**/*", "scripts/**/*"]
+}

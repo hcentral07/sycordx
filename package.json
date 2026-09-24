@@ -1,0 +1,34 @@
+{
+    "name": "sycord",
+    "version": "1.0.0",
+    "description": "Sycord — the Discord client mod that hits different. Vencord + Equicord + Replugged DNA, fully yours.",
+    "license": "GPL-3.0-or-later",
+    "private": true,
+    "scripts": {
+        "build": "node scripts/build.mjs",
+        "buildWeb": "node scripts/build.mjs --web",
+        "watch": "node scripts/build.mjs --watch",
+        "inject": "node scripts/inject.mjs",
+        "uninject": "node scripts/inject.mjs --uninject",
+        "lint": "eslint src --ext .ts,.tsx",
+        "typecheck": "tsc --noEmit",
+        "test": "pnpm typecheck && pnpm lint"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@types/react": "^18.0.0",
+        "@types/react-dom": "^18.0.0",
+        "@typescript-eslint/eslint-plugin": "^6.0.0",
+        "@typescript-eslint/parser": "^6.0.0",
+        "electron": "^30.0.0",
+        "esbuild": "^0.20.0",
+        "eslint": "^8.0.0",
+        "typescript": "^5.4.0"
+    },
+    "dependencies": {
+        "@electron/asar": "^4.3.0"
+    }
+}
