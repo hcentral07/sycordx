@@ -8,6 +8,11 @@
  *   3. Prepend a require() to Discord's main entry that loads our hook
  *   4. Delete app.asar so Electron loads the folder
  *
+ * The hook patches BrowserWindow to:
+ *   - swap in our preload (which chains Discord's original preload)
+ *   - call webContents.executeJavaScript() with renderer.js after load,
+ *     bypassing Discord's CSP
+ *
  * Uninject reverses steps 1-4.
  */
 
@@ -93,10 +98,12 @@ function makeHookCode(sycordDir) {
 
 "use strict";
 const path   = require("path");
+const fs     = require("fs");
 const Module = require("module");
 const { app } = require("electron");
 
 const SYCORD_DIR = ${sycordDirStr};
+const RENDERER_PATH = path.join(SYCORD_DIR, "renderer.js");
 
 // Intercept require("electron") so we can proxy BrowserWindow
 const originalLoad = Module._load.bind(Module);
@@ -114,6 +121,7 @@ Module._load = function(request, parent, isMain) {
             const opts     = args[0] || {};
             const webPrefs = Object.assign({}, opts.webPreferences || {});
 
+            // Remember Discord's original preload so ours can chain it
             if (webPrefs.preload) {
                 process.env.SYCORD_ORIGINAL_PRELOAD = webPrefs.preload;
             }
@@ -122,7 +130,28 @@ Module._load = function(request, parent, isMain) {
             webPrefs.contextIsolation = false;
 
             args[0] = Object.assign({}, opts, { webPreferences: webPrefs });
-            return new target(...args);
+
+            const win = new target(...args);
+
+            // ── Deliver renderer bundle via executeJavaScript ───────────────
+            // This bypasses Discord's CSP entirely because it's a privileged
+            // Electron API, not a page-level <script> tag injection.
+            try {
+                win.webContents.on("did-finish-load", () => {
+                    try {
+                        const code = fs.readFileSync(RENDERER_PATH, "utf-8");
+                        win.webContents.executeJavaScript(code, true)
+                            .then(() => console.log("[Sycord] Renderer delivered to window ✅"))
+                            .catch(e => console.error("[Sycord] executeJavaScript rejected:", e));
+                    } catch (e) {
+                        console.error("[Sycord] Failed to read/deliver renderer.js:", e);
+                    }
+                });
+            } catch (e) {
+                console.error("[Sycord] Failed to attach did-finish-load listener:", e);
+            }
+
+            return win;
         },
         get(target, prop) {
             if (prop === "prototype") return target.prototype;
@@ -142,7 +171,7 @@ Module._load = function(request, parent, isMain) {
 console.log("[Sycord] Hook active 🔥");
 
 app.whenReady().then(() => {
-    console.log("[Sycord] App ready — preload will be swapped on next BrowserWindow");
+    console.log("[Sycord] App ready — BrowserWindows will receive the renderer on load");
 });
 `;
 }
@@ -177,7 +206,6 @@ async function main() {
     if (UNINJECT) {
         let didSomething = false;
 
-        // Remove extracted app/ if it's ours
         if (existsSync(appDir)) {
             const marker = join(appDir, "sycord-hook.js");
             if (existsSync(marker)) {
@@ -189,7 +217,6 @@ async function main() {
             }
         }
 
-        // Restore backup if we have one
         if (existsSync(appAsarBak)) {
             if (existsSync(appAsar)) rmSync(appAsar, { force: true });
             copyFileSync(appAsarBak, appAsar);
@@ -204,13 +231,10 @@ async function main() {
 
     // ── INJECT ──────────────────────────────────────────────────────────────
 
-    // Case 1: already injected (app/ has our hook, asar gone)
     if (existsSync(join(appDir, "sycord-hook.js")) && !existsSync(appAsar)) {
         console.log("ℹ  Already injected. Re-running to refresh hook.");
-        // fall through and rewrite the hook + patch main, but don't re-extract
     }
 
-    // Case 2: fresh install — extract from asar
     if (existsSync(appAsar)) {
         if (!statSync(appAsar).isFile()) {
             console.error("❌ app.asar is not a file. Discord install is in an odd state.");
@@ -218,13 +242,11 @@ async function main() {
             exit(1);
         }
 
-        // Back up the original
         if (!existsSync(appAsarBak)) {
             console.log("… backing up app.asar");
             copyFileSync(appAsar, appAsarBak);
         }
 
-        // Clear any old extraction
         if (existsSync(appDir)) {
             console.log("… clearing old resources/app/");
             rmSync(appDir, { recursive: true, force: true });
@@ -242,7 +264,6 @@ async function main() {
         rmSync(appAsar, { force: true });
     }
 
-    // Make sure we have an app/ folder to work with
     if (!existsSync(appDir)) {
         console.error("❌ resources/app/ missing and no app.asar to extract from.");
         exit(1);
@@ -251,9 +272,14 @@ async function main() {
     // ── Drop the hook ───────────────────────────────────────────────────────
     const sycordDist = resolve("dist");
     const preloadJs  = join(sycordDist, "preload.js");
+    const rendererJs = join(sycordDist, "renderer.js");
 
     if (!existsSync(preloadJs)) {
         console.error("❌ dist/preload.js not found. Run 'npm run build' first.");
+        exit(1);
+    }
+    if (!existsSync(rendererJs)) {
+        console.error("❌ dist/renderer.js not found. Run 'npm run build' first.");
         exit(1);
     }
 
@@ -282,7 +308,6 @@ async function main() {
     if (mainSrc.includes(REQUIRE_LINE)) {
         console.log("… Discord entry already patched (idempotent)");
     } else {
-        // Prepend the require at the very top so it runs before anything else
         mainSrc = `// Sycord injection marker — safe to delete this line to disable\n${REQUIRE_LINE}\n${mainSrc}`;
         writeFileSync(mainPath, mainSrc);
         console.log(`… patched entry: ${main}`);

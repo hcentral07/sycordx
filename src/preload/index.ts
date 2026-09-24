@@ -1,10 +1,14 @@
 /**
  * Sycord Preload
  * Runs in renderer process WITH Node.js access, BEFORE page scripts.
+ *
  * Responsibilities:
  *   1. Chain Discord's original preload (ipcRenderer bindings etc.)
- *   2. Inject renderer.js into the page via <script> tag on DOMContentLoaded
- *   3. Expose safe IPC bridge via contextBridge if contextIsolation is on
+ *
+ * That's it. Renderer code delivery is handled by the main process via
+ * webContents.executeJavaScript() — see scripts/inject.mjs → makeHookCode().
+ * This bypasses Discord's Content Security Policy entirely, which blocks
+ * injected <script> tags in modern Discord builds.
  */
 
 import { readFileSync } from "fs";
@@ -38,79 +42,11 @@ if (originalPreload) {
         // @ts-expect-error — _compile is internal but stable and used by
         // every Electron client mod (BetterDiscord, Vencord, etc.).
         fakeModule._compile(code, originalPreload);
+
+        console.log("[Sycord Preload] Discord preload chained ✅");
     } catch (e) {
         console.error("[Sycord Preload] Failed to chain Discord preload:", e);
     }
-}
-
-// ── Inject renderer bundle ────────────────────────────────────────────────────
-const RENDERER_PATH = path.join(__dirname, "renderer.js");
-
-/**
- * Pull Discord's CSP nonce from any existing <script nonce="..."> in the DOM.
- *
- * Discord's Content Security Policy includes a nonce. Per CSP spec, when a
- * nonce is present in script-src, 'unsafe-inline' is ignored. That means our
- * injected <script> tag is blocked UNLESS it carries the same nonce.
- *
- * Discord's own scripts are already in the DOM by the time our preload runs
- * at DOMContentLoaded, so we can copy the nonce from one of them.
- */
-function getCspNonce(): string | null {
-    const existing = document.querySelector("script[nonce]");
-    const nonce = existing?.getAttribute("nonce");
-    return nonce && nonce.length > 0 ? nonce : null;
-}
-
-function injectRenderer() {
-    try {
-        const code = readFileSync(RENDERER_PATH, "utf-8");
-        const script = document.createElement("script");
-        script.id = "sycord-renderer";
-
-        // ── CSP: stamp the nonce so Discord's CSP lets this script run ───────
-        const nonce = getCspNonce();
-        if (nonce) {
-            script.setAttribute("nonce", nonce);
-        } else {
-            console.warn("[Sycord Preload] No CSP nonce found — script may be blocked by Discord's CSP");
-        }
-
-        // Insert FIRST — we need to hook webpack before anything executes
-        if (document.head.firstChild) {
-            document.head.insertBefore(script, document.head.firstChild);
-        } else {
-            document.head.appendChild(script);
-        }
-
-        // Setting textContent after insertion fires synchronously (if allowed)
-        script.textContent = code;
-
-        // ── Verify the script actually EXECUTED, not just that we wrote it ──
-        // Setting textContent never throws, even when CSP silently blocks it.
-        // The only reliable check is to look for a global our renderer sets.
-        setTimeout(() => {
-            const sycord = (window as any).Sycord;
-            if (sycord && typeof sycord === "object") {
-                console.log("[Sycord Preload] Renderer executed ✅");
-            } else {
-                console.error(
-                    "[Sycord Preload] Script tag was inserted but window.Sycord is missing.\n" +
-                    "  Possible causes:\n" +
-                    "   - CSP blocked the inline script (nonce missing or wrong)\n" +
-                    "   - The renderer bundle crashed on import before reaching its export line\n" +
-                    "  Check DevTools console for a red error above this message."
-                );
-            }
-        }, 250);
-    } catch (e) {
-        console.error("[Sycord Preload] Failed to inject renderer:", e);
-    }
-}
-
-// Discord's renderer loads its HTML after the document is ready
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", injectRenderer, { once: true });
 } else {
-    injectRenderer();
+    console.warn("[Sycord Preload] SYCORD_ORIGINAL_PRELOAD not set — Discord's preload will not run");
 }
